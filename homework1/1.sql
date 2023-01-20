@@ -17,13 +17,16 @@ flattened AS (
     a,
     b
   from flattened
-),
-test as (
+)
+SELECT *
+FROM aaa;
+with test as (
   SELECT *
   from aaa
   WHERE seq = 1
   UNION ALL
-  select seq + 1, a + 1,
+  select seq + 1,
+    a + 1,
     b + 2
   FROM test
   LIMIT 20
