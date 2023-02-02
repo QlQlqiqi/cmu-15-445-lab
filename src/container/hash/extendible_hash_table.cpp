@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <common/logger.h>
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdlib>
@@ -103,7 +104,8 @@ void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
       global_depth_++;
       int sz = dir_.size();
       dir_.reserve(sz << 1);
-      std::copy_n(dir_.begin(), sz, std::back_inserter(dir_));
+      std::copy(dir_.begin(), dir_.end(), std::back_inserter(dir_));
+      // std::copy_n(dir_.begin(), sz, std::back_inserter(dir_));
     }
     bucket = dir_[idx];
     int depth = bucket->GetDepth();
@@ -111,7 +113,6 @@ void ExtendibleHashTable<K, V>::Insert(const K &key, const V &value) {
     auto old_bucket = std::make_shared<Bucket>(bucket_size_, depth + 1);
     num_buckets_++;
     int mask = 1 << depth;
-    auto list = bucket->GetItems();
     for (auto &[k, v] : bucket->GetItems()) {
       size_t hash = std::hash<K>()(k);
       if ((hash & mask) != 0) {
@@ -139,11 +140,10 @@ ExtendibleHashTable<K, V>::Bucket::Bucket(size_t array_size, int depth) : size_(
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Find(const K &key, V &value) -> bool {
   std::scoped_lock<std::shared_mutex> rlock(latch_);
-  for (const std::pair<K, V> &pair : list_) {
-    if (pair.first == key) {
-      value = pair.second;
-      return true;
-    }
+  auto it = mp_.find(key);
+  if (it != mp_.end()) {
+    value = it->second;
+    return true;
   }
   return false;
 }
@@ -151,12 +151,10 @@ auto ExtendibleHashTable<K, V>::Bucket::Find(const K &key, V &value) -> bool {
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
   std::scoped_lock<std::shared_mutex> wlock(latch_);
-  for (auto it = list_.begin(); it != list_.end(); it++) {
-    auto pair = *it;
-    if (pair.first == key) {
-      list_.erase(it);
-      return true;
-    }
+  auto it = mp_.find(key);
+  if (it != mp_.end()) {
+    mp_.erase(it);
+    return true;
   }
   return false;
 }
@@ -164,21 +162,20 @@ auto ExtendibleHashTable<K, V>::Bucket::Remove(const K &key) -> bool {
 template <typename K, typename V>
 auto ExtendibleHashTable<K, V>::Bucket::Insert(const K &key, const V &value) -> bool {
   std::scoped_lock<std::shared_mutex> wlock(latch_);
-  for (std::pair<K, V> &pair : list_) {
-    if (pair.first == key) {
-      pair.second = value;
-      return true;
-    }
+  auto it = mp_.find(key);
+  if (it != mp_.end()) {
+    it->second = value;
+    return true;
   }
   if (IsFull()) {
     return false;
   }
-  list_.emplace_back(std::pair<K, V>(key, value));
+  mp_.emplace(key, value);
   return true;
 }
 
 template <typename K, typename V>
-auto ExtendibleHashTable<K, V>::Bucket::IndexOf(const K &key) -> size_t {
+auto inline ExtendibleHashTable<K, V>::Bucket::IndexOf(const K &key) -> size_t {
   // std::scoped_lock<std::shared_mutex> rlock(latch_);
   return std::hash<K>()(key) & ((1 << depth_) - 1);
 }

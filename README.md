@@ -44,4 +44,6 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 
 最后
 
-![image-20230202194101102](C:\Users\QlQl\Desktop\cmu 15-445\cmu-15-445-lab-homework\assets\image-20230202194101102.png)
+![image-20230202203437434](C:\Users\QlQl\Desktop\cmu 15-445\cmu-15-445-lab-homework\assets\image-20230202203437434.png)
+
+我觉得瓶颈应该在 lru-k 的 evict 上，因为这个是 O(n) 的，奈何实力不够无法进行优化。
