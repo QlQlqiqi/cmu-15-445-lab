@@ -44,5 +44,4 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 
 最后
 
-![image-20230202192243981](G:\typora\Typora\picture\image-20230202192243981.png)
-
+![image-20230202194101102](C:\Users\QlQl\Desktop\cmu 15-445\cmu-15-445-lab-homework\assets\image-20230202194101102.png)
