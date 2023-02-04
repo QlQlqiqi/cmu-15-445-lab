@@ -44,6 +44,8 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 
 最后
 
-![image-20230202203437434](C:\Users\QlQl\Desktop\cmu 15-445\cmu-15-445-lab-homework\assets\image-20230202203437434.png)
+![image-20230204205940642](https://article.biliimg.com/bfs/article/416b8c7084262d22b1cc26114128fa42193f12f3.png)
 
-我觉得瓶颈应该在 lru-k 的 evict 上，因为这个是 O(n) 的，奈何实力不够无法进行优化。
+我觉得瓶颈应该在 lru-k 的 evict 上，因为这个是 O(n) 的。
+
+###### 这个优化可以用索引优先队列+循环数组来优化，可以将 evcit 算法优化到O(1)，其他操作从O(1)升为O(logn)，但是因为除了 evict 的每个操作都需要对索引优先队列进行操作，所以会导致每个操作之间不能并行处理。
