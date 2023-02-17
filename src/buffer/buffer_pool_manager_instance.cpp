@@ -14,7 +14,6 @@
 #include "buffer/buffer_pool_manager_instance.h"
 #include <cstddef>
 #include <memory>
-#include <shared_mutex>
 #include "common/config.h"
 #include "common/exception.h"
 #include "common/logger.h"
@@ -34,7 +33,6 @@ BufferPoolManagerInstance::BufferPoolManagerInstance(size_t pool_size, DiskManag
   for (size_t i = 0; i < pool_size_; ++i) {
     free_list_.emplace_back(static_cast<int>(i));
   }
-
   // TODO(students): remove this line after you have implemented the buffer pool manager
   // throw NotImplementedException(
   //     "BufferPoolManager is not implemented yet. If you have finished implementing BPM, please remove the throw "
@@ -48,7 +46,7 @@ BufferPoolManagerInstance::~BufferPoolManagerInstance() {
 }
 
 auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * {
-  rwlatch_.lock();
+  std::scoped_lock<std::mutex> lock(latch_);
   // LOG_DEBUG("NewPgImp func");
   // free frame
   if (!free_list_.empty()) {
@@ -56,16 +54,13 @@ auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * {
     free_list_.pop_back();
     auto new_page_id = AllocatePage();
     auto page_ptr = &pages_[frame_id];
-    page_ptr->WLatch();
     replacer_->RecordAccess(frame_id);
     replacer_->SetEvictable(frame_id, false);
     page_table_->Insert(new_page_id, frame_id);
-    rwlatch_.unlock();
     InitPage(page_ptr);
     page_ptr->page_id_ = new_page_id;
     page_ptr->pin_count_ = 1;
     *page_id = new_page_id;
-    page_ptr->WUnlatch();
     // LOG_DEBUG("page id: %d\tframe id: %d", new_page_id, frame_id);
     // LOG_DEBUG("==================================================================");
     return page_ptr;
@@ -75,18 +70,15 @@ auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * {
   if (!replacer_->Evict(&frame_id)) {
     // LOG_DEBUG("there is no evictable frame");
     // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock();
     return nullptr;
   }
   auto page_ptr = &pages_[frame_id];
   auto new_page_id = AllocatePage();
-  page_ptr->WLatch();
   size_t old_page_id = page_ptr->page_id_;
   replacer_->RecordAccess(frame_id);
   replacer_->SetEvictable(frame_id, false);
   page_table_->Remove(old_page_id);
   page_table_->Insert(new_page_id, frame_id);
-  rwlatch_.unlock();
   // 写 dirty page
   if (page_ptr->is_dirty_) {
     disk_manager_->WritePage(old_page_id, page_ptr->data_);
@@ -95,7 +87,6 @@ auto BufferPoolManagerInstance::NewPgImp(page_id_t *page_id) -> Page * {
   page_ptr->page_id_ = new_page_id;
   page_ptr->pin_count_ = 1;
   *page_id = new_page_id;
-  page_ptr->WUnlatch();
   // LOG_DEBUG("page id: %d\tframe id: %d", new_page_id, frame_id);
   // LOG_DEBUG("==================================================================");
   return page_ptr;
@@ -106,31 +97,14 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
   if (page_id == INVALID_PAGE_ID) {
     return nullptr;
   }
-  rwlatch_.lock_shared();
+  std::scoped_lock<std::mutex> lock(latch_);
   // page_id is valid
   frame_id_t frame_id = -1;
-  if (page_table_->Find(page_id, frame_id)) {
-    auto page_ptr = &pages_[frame_id];
-    page_ptr->WLatch();
-    replacer_->RecordAccess(frame_id);
-    replacer_->SetEvictable(frame_id, false);
-    rwlatch_.unlock_shared();
-    pages_[frame_id].pin_count_++;
-    page_ptr->WUnlatch();
-    // LOG_DEBUG("==================================================================");
-    return &pages_[frame_id];
-  }
-  rwlatch_.unlock_shared();
-  rwlatch_.lock();
   // 二次判断
   if (page_table_->Find(page_id, frame_id)) {
-    auto page_ptr = &pages_[frame_id];
-    page_ptr->WLatch();
     replacer_->RecordAccess(frame_id);
     replacer_->SetEvictable(frame_id, false);
-    rwlatch_.unlock();
     pages_[frame_id].pin_count_++;
-    page_ptr->WUnlatch();
     // LOG_DEBUG("==================================================================");
     return &pages_[frame_id];
   }
@@ -139,11 +113,9 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
     auto frame_id = free_list_.back();
     free_list_.pop_back();
     auto page_ptr = &pages_[frame_id];
-    page_ptr->WLatch();
     replacer_->RecordAccess(frame_id);
     replacer_->SetEvictable(frame_id, false);
     page_table_->Insert(page_id, frame_id);
-    rwlatch_.unlock();
     InitPage(page_ptr);
     // read from disk
     disk_manager_->ReadPage(page_id, page_ptr->data_);
@@ -151,24 +123,20 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
     page_ptr->pin_count_++;
     // LOG_DEBUG("page id: %d\tframe id: %d", page_ptr->page_id_, frame_id);
     // LOG_DEBUG("==================================================================");
-    page_ptr->WUnlatch();
     return page_ptr;
   }
   // replacer 中 evit 一个 frame
   if (!replacer_->Evict(&frame_id)) {
     // LOG_DEBUG("there is no evictable frame");
     // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock();
     return nullptr;
   }
   auto page_ptr = &pages_[frame_id];
-  page_ptr->WLatch();
   replacer_->RecordAccess(frame_id);
   replacer_->SetEvictable(frame_id, false);
   size_t old_page_id = page_ptr->page_id_;
   page_table_->Remove(old_page_id);
   page_table_->Insert(page_id, frame_id);
-  rwlatch_.unlock();
   // 写 dirty page
   if (page_ptr->is_dirty_) {
     disk_manager_->WritePage(page_ptr->page_id_, page_ptr->data_);
@@ -180,7 +148,6 @@ auto BufferPoolManagerInstance::FetchPgImp(page_id_t page_id) -> Page * {
   page_ptr->pin_count_ = 1;
   // LOG_DEBUG("page id: %d\tframe id: %d", page_ptr->page_id_, frame_id);
   // LOG_DEBUG("==================================================================");
-  page_ptr->WUnlatch();
   return page_ptr;
 }
 
@@ -189,30 +156,24 @@ auto BufferPoolManagerInstance::UnpinPgImp(page_id_t page_id, bool is_dirty) -> 
   if (page_id == INVALID_PAGE_ID) {
     return false;
   }
-  rwlatch_.lock_shared();
+  std::scoped_lock<std::mutex> lock(latch_);
   frame_id_t frame_id = -1;
   if (!page_table_->Find(page_id, frame_id)) {
     // LOG_DEBUG("there is no evictable page with %d id", page_id);
     // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock_shared();
     return false;
   }
   auto page_ptr = &pages_[frame_id];
-  page_ptr->WLatch();
   if (page_ptr->pin_count_ <= 0) {
     // LOG_DEBUG("the page is already unpinned");
     // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock_shared();
-    page_ptr->WUnlatch();
     return false;
   }
   page_ptr->pin_count_--;
   if (page_ptr->pin_count_ == 0) {
     replacer_->SetEvictable(frame_id, true);
   }
-  rwlatch_.unlock_shared();
   page_ptr->is_dirty_ = page_ptr->is_dirty_ || is_dirty;
-  page_ptr->WUnlatch();
   // LOG_DEBUG("the page's is_dirty is %d", page_ptr->is_dirty_);
   // LOG_DEBUG("==================================================================");
   return true;
@@ -223,20 +184,16 @@ auto BufferPoolManagerInstance::FlushPgImp(page_id_t page_id) -> bool {
   if (page_id == INVALID_PAGE_ID) {
     return false;
   }
-  rwlatch_.lock_shared();
+  std::scoped_lock<std::mutex> lock(latch_);
   frame_id_t frame_id = -1;
   if (!page_table_->Find(page_id, frame_id)) {
     // LOG_DEBUG("there is no evictable page with %d id", page_id);
     // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock_shared();
     return false;
   }
   auto page_ptr = &pages_[frame_id];
-  page_ptr->WLatch();
-  rwlatch_.unlock_shared();
   disk_manager_->WritePage(page_ptr->page_id_, page_ptr->data_);
   page_ptr->is_dirty_ = false;
-  page_ptr->WUnlatch();
   // LOG_DEBUG("page with %d id has been flushed successfully", page_id);
   // LOG_DEBUG("==================================================================");
   return true;
@@ -256,38 +213,26 @@ auto BufferPoolManagerInstance::DeletePgImp(page_id_t page_id) -> bool {
   if (page_id == INVALID_PAGE_ID) {
     return true;
   }
-  rwlatch_.lock_shared();
+  std::scoped_lock<std::mutex> lock(latch_);
   frame_id_t frame_id = -1;
   if (!page_table_->Find(page_id, frame_id)) {
     // LOG_DEBUG("there is no evictable page with %d id", page_id);
     // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock_shared();
-    return true;
-  }
-  rwlatch_.unlock_shared();
-  rwlatch_.lock();
-  if (!page_table_->Find(page_id, frame_id)) {
-    // LOG_DEBUG("there is no evictable page with %d id", page_id);
-    // LOG_DEBUG("==================================================================");
-    rwlatch_.unlock();
     return true;
   }
   auto page_ptr = &pages_[frame_id];
-  page_ptr->WLatch();
   if (page_ptr->pin_count_ > 0) {
     // LOG_DEBUG("the page's pin_count is %d and can not be deleted", page_ptr->pin_count_);
     // LOG_DEBUG("==================================================================");
-    page_ptr->WUnlatch();
-    rwlatch_.unlock();
+    // throw Exception("delete failed\n");
     return false;
   }
   free_list_.emplace_back(frame_id);
   page_table_->Remove(page_id);
   replacer_->Remove(frame_id);
-  rwlatch_.unlock();
   InitPage(page_ptr);
   DeallocatePage(page_id);
-  page_ptr->WUnlatch();
+
   // LOG_DEBUG("the page with %d id has been removed successfully", page_id);
   // LOG_DEBUG("==================================================================");
   return true;

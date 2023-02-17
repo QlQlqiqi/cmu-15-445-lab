@@ -15,7 +15,6 @@
 #include <iostream>
 #include <list>
 #include <mutex>  // NOLINT
-#include <shared_mutex>
 #include <unordered_map>
 
 #include "buffer/buffer_pool_manager.h"
@@ -168,7 +167,7 @@ class BufferPoolManagerInstance : public BufferPoolManager {
   // free_list_ 专属锁，获取之前需要先获取 latch_ 的读锁
   // std::mutex free_list_latch_;
   // 全局锁
-  std::shared_mutex rwlatch_;
+  std::mutex latch_;
 
   /**
    * @brief Allocate a page on disk. Caller should acquire the latch before calling this function.

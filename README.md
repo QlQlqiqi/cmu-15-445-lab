@@ -1,4 +1,4 @@
-#### 记录自己做 cmu 15-445fall2022 lab&homework 的过程
+#### 记录自己做 cmu 15-445fall2022 lab 的过程
 
 ###### 背景&用法
 
@@ -49,3 +49,27 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 我觉得瓶颈应该在 lru-k 的 evict 上，因为这个是 O(n) 的。
 
 ###### 这个优化可以用索引优先队列+循环数组来优化，可以将 evcit 算法优化到O(1)，其他操作从O(1)升为O(logn)，但是因为除了 evict 的每个操作都需要对索引优先队列进行操作，所以会导致每个操作之间不能并行处理。
+
+# lab2
+
+###### 一个大坑：
+
+【bmp 死锁】问题：假如有两个线程 t1，t2 同时执行 insert 并竞争 root page，那么其中一个线程 t1 成功，另一个线程 t2 定会因为 root page 被【锁住】，bpm 的 fetch 过程也就被【锁住】，然后导致 bpm 内部的锁不能释放；然后 t1 需要 new page，那么就需要获取 bmp 内部的锁，这时候因为 t1 已经锁住了 bmp，所以【死锁】了。
+
+我是因为在 insert 中，第一次需要进行 page split 的时候，卡在了 buffer_pool_manager_->NewPage 这块，所以我想到了上述情况。
+
+很显然，bmp 应该在调用 fetch 或者 new page 之后就释放了锁，而不是一直持有。
+
+**这个是 lab1 测试中没测试出来的。**
+
+###### 第二个大坑：
+
+因为就加锁就是从上到下，释放锁是从下到上，所以我刚开始想当然的认为，如果你获得 parent page lock，那么就可以对其 child 等 page 进行操作，而不需要获得其锁；但是因为从上到下加锁的过程中，可能因为 page is safe，提前释放锁，这样就导致，你有可能获得了 parent lock，但是其 child page lock 可能正在被其他线程持有。
+
+
+
+还有一些小细节很关键：
+
+- 如果你更新了 internal node，那么一定要在合适的位置更新其 child node。
+- 如果你需要获取 node 的 kv 对，那么一定要注意你的指针的类型，因为 internal node 和 leaf node 的 array 偏移不一样，很有可能导致出错。
+- 因为我在 remove 的时候，如果将所有的 kv 全部移除，并不会置 root page id 为 invalid page id，所有 bgein 中需要额外判断一下。
