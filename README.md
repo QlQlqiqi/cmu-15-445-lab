@@ -73,3 +73,12 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 - 如果你更新了 internal node，那么一定要在合适的位置更新其 child node。
 - 如果你需要获取 node 的 kv 对，那么一定要注意你的指针的类型，因为 internal node 和 leaf node 的 array 偏移不一样，很有可能导致出错。
 - 因为我在 remove 的时候，如果将所有的 kv 全部移除，并不会置 root page id 为 invalid page id，所有 bgein 中需要额外判断一下。
+
+
+
+我的乐观锁加锁策略有问题：
+
+- 乐观锁我是给当前节点加读锁，如果下一个节点不存在就释放读锁加写锁；否则，加读锁，如果下一个节点不是 leaf node，则释放当前节点；否则释放下一个节点读锁加写锁。
+- 乐观锁这里有一个小点，加完写锁需要判断一下当前节点是否是 leaf node，因为可能在切换读写锁的时候节点变化；
+
+![](https://article.biliimg.com/bfs/article/0ec5530bb6f46f245f12748a2fd6f4426adf2f24.png)
