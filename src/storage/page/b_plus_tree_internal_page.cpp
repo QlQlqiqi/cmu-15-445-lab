@@ -108,7 +108,7 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::SplitL(const KeyComparator &keyComparator, 
   auto new_node_ptr = reinterpret_cast<B_PLUS_TREE_INTERNAL_PAGE_TYPE *>(new_page_ptr->GetData());
   new_node_ptr->Init(new_page_id, GetParentPageId(), GetMaxSize());
 
-  // 将 (min_size, size) 移到新的 page
+  // 将 [min_size, size) 移到新的 page
   int split_index = GetMinSize();
   // auto page_id = new_node_ptr->GetPageId();
   for (int i = split_index, sz = GetSize(); i < sz; i++) {
@@ -121,8 +121,8 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::SplitL(const KeyComparator &keyComparator, 
     tmp_page_ptr->WLatch();
     auto tmp_node_ptr = reinterpret_cast<B_PLUS_TREE_INTERNAL_PAGE_TYPE *>(tmp_page_ptr->GetData());
     tmp_node_ptr->SetParentPageId(new_page_id);
-    tmp_page_ptr->WUnlatch();
     buffer_pool_manager_->UnpinPage(ValueAt(i), true);
+    tmp_page_ptr->WUnlatch();
   }
   return new_page_ptr;
 }

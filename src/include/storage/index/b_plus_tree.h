@@ -41,7 +41,7 @@ class BPlusTree {
 
  public:
   explicit BPlusTree(std::string name, BufferPoolManager *buffer_pool_manager, const KeyComparator &comparator,
-                     int leaf_max_size = LEAF_PAGE_SIZE - 1, int internal_max_size = INTERNAL_PAGE_SIZE - 1);
+                     int leaf_max_size = LEAF_PAGE_SIZE, int internal_max_size = INTERNAL_PAGE_SIZE);
 
   // Returns true if this B+ tree has no keys and values.
   auto IsEmpty() const -> bool;
@@ -78,6 +78,7 @@ class BPlusTree {
  private:
   void UpdateRootPageId(int insert_record = 0);
   void UnpinFromBottomToRoot(page_id_t page_id, BufferPoolManager *buffer_pool_manager_, Operation op);
+  auto OptmisticLock(const KeyType &key) -> Page *;
 
   /**
    * 从 root page id 开始寻找 key 对应的 leaf node page，
