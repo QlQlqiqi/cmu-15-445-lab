@@ -50,6 +50,8 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 
 ###### 这个优化可以用索引优先队列+循环数组来优化，可以将 evcit 算法优化到O(1)，其他操作从O(1)升为O(logn)，但是因为除了 evict 的每个操作都需要对索引优先队列进行操作，所以会导致每个操作之间不能并行处理。
 
+
+
 # lab2
 
 ###### 一个大坑：
@@ -82,3 +84,11 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 - 乐观锁这里有一个小点，加完写锁需要判断一下当前节点是否是 leaf node，因为可能在切换读写锁的时候节点变化；
 
 ![](https://article.biliimg.com/bfs/article/0ec5530bb6f46f245f12748a2fd6f4426adf2f24.png)
+
+
+
+# lab3
+
+optional leaderboard 没有实现，感觉有些复杂，以后有机会再说。。。
+
+其他的中规中矩，注意细节，没什么非常难的地方。
