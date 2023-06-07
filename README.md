@@ -89,6 +89,18 @@ git reset --hard d830931a9b2aca66c0589de67b5d7a5fd2c87a79
 
 # lab3
 
-optional leaderboard 没有实现，感觉有些复杂，以后有机会再说。。。
+optional leaderboard 没有实现，感觉有些复杂，以后有机会再说。。。具体参考这个[博客](https://zhuanlan.zhihu.com/p/593909820)
 
 其他的中规中矩，注意细节，没什么非常难的地方。
+
+
+
+# lab4
+
+> 没有实现 optional leaderboard
+
+[github](https://github.com/YukunJ/BusTub-DB/tree/master)
+
+[知乎](https://zhuanlan.zhihu.com/p/592782024)
+
+[知乎](https://zhuanlan.zhihu.com/p/600001968)

@@ -23,13 +23,16 @@ DeleteExecutor::DeleteExecutor(ExecutorContext *exec_ctx, const DeletePlanNode *
     : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)), done_(false) {}
 
 void DeleteExecutor::Init() {
+  auto txn = exec_ctx_->GetTransaction();
   table_info_ = exec_ctx_->GetCatalog()->GetTable(plan_->table_oid_);
   table_heap_ptr_ = table_info_->table_.get();
   child_executor_->Init();
-  // table 加 IX
-  if (!exec_ctx_->GetLockManager()->LockTable(exec_ctx_->GetTransaction(), LockManager::LockMode::INTENTION_EXCLUSIVE,
-                                              table_info_->oid_)) {
-    throw Exception("lock IX into table failed\n");
+  // table 加 IX if not locked yet
+  if (!txn->IsTableIntentionExclusiveLocked(table_info_->oid_)) {
+    if (!exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, table_info_->oid_)) {
+      txn->SetState(TransactionState::ABORTED);
+      throw ExecutionException("DeleteExecutor::Init failed: lock IX on table failed");
+    }
   }
 }
 
@@ -39,23 +42,24 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
   }
   int rows = 0;
   Tuple t;
-  RID r;
-  while (child_executor_->Next(&t, &r)) {
-    if (!table_heap_ptr_->MarkDelete(r, exec_ctx_->GetTransaction())) {
-      throw Exception("mark delete tuple failed\n");
+  auto txn = exec_ctx_->GetTransaction();
+  while (child_executor_->Next(&t, rid)) {
+    // lock first if not locked yet, then mark deleted on this row
+    RID deleted_rid = t.GetRid();
+    if (!txn->IsRowExclusiveLocked(table_info_->oid_, deleted_rid)) {
+      if (!exec_ctx_->GetLockManager()->LockRow(txn, LockManager::LockMode::EXCLUSIVE, table_info_->oid_,
+                                                deleted_rid)) {
+        txn->SetState(TransactionState::ABORTED);
+        throw ExecutionException("DeleteExecutor::Next failed: lock X on row failed");
+      }
     }
-    // row lock x
-    if (!exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::EXCLUSIVE,
-                                              table_info_->oid_, r)) {
-      throw Exception("lock row X failed\n");
-    }
+    rows += static_cast<int>(table_heap_ptr_->MarkDelete(deleted_rid, txn));
     // 更新 index
     auto indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
     for (auto index_info : indexes) {
       auto index_key = t.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
-      index_info->index_->DeleteEntry(index_key, r, exec_ctx_->GetTransaction());
+      index_info->index_->DeleteEntry(index_key, {}, txn);
     }
-    rows++;
   }
   Value value(TypeId::INTEGER, rows);
   std::vector<Value> v;

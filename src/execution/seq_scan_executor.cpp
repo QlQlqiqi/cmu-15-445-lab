@@ -16,58 +16,67 @@
 namespace bustub {
 
 SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNode *plan)
-    : AbstractExecutor(exec_ctx), plan_(plan) {}
+    : AbstractExecutor(exec_ctx),
+      plan_(plan),
+      table_iterator_ptr_(exec_ctx->GetCatalog()->GetTable(plan->table_oid_)->table_->End()),
+      table_iterator_end_(exec_ctx->GetCatalog()->GetTable(plan->table_oid_)->table_->End()) {}
 
 void SeqScanExecutor::Init() {
-  table_info_ = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid());
-  table_heap_ptr_ = table_info_->table_.get();
-  table_iterator_ptr_ = std::make_unique<TableIterator>(table_heap_ptr_->Begin(exec_ctx_->GetTransaction()));
-  is_read_uncommitted_ = exec_ctx_->GetTransaction()->GetIsolationLevel() == IsolationLevel::READ_UNCOMMITTED;
-  // table 加 IS/IX
-  if (is_read_uncommitted_) {
-    if (!exec_ctx_->GetLockManager()->LockTable(exec_ctx_->GetTransaction(), LockManager::LockMode::INTENTION_EXCLUSIVE,
-                                                table_info_->oid_)) {
-      throw Exception("lock IX into table failed\n");
+  auto oid = plan_->GetTableOid();
+  auto txn = exec_ctx_->GetTransaction();
+  auto isolation_level = txn->GetIsolationLevel();
+  switch (isolation_level) {
+    case IsolationLevel::REPEATABLE_READ:
+    case IsolationLevel::READ_COMMITTED: {
+      // 如果没有 IS/IX，则获取
+      if (!txn->IsTableIntentionSharedLocked(oid) && !txn->IsTableIntentionExclusiveLocked(oid)) {
+        if (!exec_ctx_->GetLockManager()->LockTable(txn, LockManager::LockMode::INTENTION_SHARED, oid)) {
+          txn->SetState(TransactionState::ABORTED);
+          throw ExecutionException("SeqScanExecutor::Init failed: lock table IS lock failed");
+        }
+      }
+      break;
     }
-  } else {
-    if (!exec_ctx_->GetLockManager()->LockTable(exec_ctx_->GetTransaction(), LockManager::LockMode::INTENTION_SHARED,
-                                                table_info_->oid_)) {
-      throw Exception("lock IS into table failed\n");
+    case IsolationLevel::READ_UNCOMMITTED: {
+      break;
     }
   }
+  table_heap_ptr_ = exec_ctx_->GetCatalog()->GetTable(oid)->table_.get();
+  table_iterator_ptr_ = table_heap_ptr_->Begin(txn);
 }
 
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
-  // 如果有锁，则 unlock
-  if (!exec_ctx_->GetTransaction()->GetSharedRowLockSet()->empty() ||
-      !exec_ctx_->GetTransaction()->GetExclusiveRowLockSet()->empty()) {
-    // unlock row
-    if (!exec_ctx_->GetLockManager()->UnlockRow(exec_ctx_->GetTransaction(), table_info_->oid_, last_rid_)) {
-      throw Exception("unlock row failed\n");
-    }
-  }
-  if (*table_iterator_ptr_ == table_heap_ptr_->End()) {
-    // 释放 table IS/IX
-    if (!exec_ctx_->GetLockManager()->UnlockTable(exec_ctx_->GetTransaction(), table_info_->oid_)) {
-      throw Exception("unlock table failed\n");
-    }
+  if (table_iterator_ptr_ == table_heap_ptr_->End()) {
     return false;
   }
-  // lock row S/X
-  if (is_read_uncommitted_) {
-    if (!exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::EXCLUSIVE,
-                                              table_info_->oid_, tuple->GetRid())) {
-      throw Exception("lock row X failed\n");
+
+  auto txn = exec_ctx_->GetTransaction();
+  auto isolation_level = txn->GetIsolationLevel();
+
+  // if not lock on this row, then lock
+  auto oid = plan_->GetTableOid();
+  *rid = table_iterator_ptr_->GetRid();
+  bool succ = false;
+  if ((isolation_level == IsolationLevel::REPEATABLE_READ || isolation_level == IsolationLevel::READ_COMMITTED) &&
+      !txn->IsRowSharedLocked(oid, *rid) && !txn->IsRowExclusiveLocked(oid, *rid)) {
+    if (!exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::SHARED, oid, *rid)) {
+      txn->SetState(TransactionState::ABORTED);
+      throw ExecutionException("SeqScanExecutor::Next failed: lock row failed");
     }
-  } else {
-    if (!exec_ctx_->GetLockManager()->LockRow(exec_ctx_->GetTransaction(), LockManager::LockMode::SHARED,
-                                              table_info_->oid_, tuple->GetRid())) {
-      throw Exception("lock row S failed\n");
+    succ = true;
+  }
+
+  *tuple = *table_iterator_ptr_++;
+
+  // unlock
+  // REPEATABLE_READ growing 阶段不能 unlock
+  // READ_UNCOMMITTED 不需要 lock
+  if (succ && isolation_level == IsolationLevel::READ_COMMITTED) {
+    if (!exec_ctx_->GetLockManager()->UnlockRow(txn, oid, *rid)) {
+      txn->SetState(TransactionState::ABORTED);
+      throw ExecutionException("SeqScanExecutor::Next failed: unlock row failed");
     }
   }
-  *tuple = *((*table_iterator_ptr_)++);
-  *rid = tuple->GetRid();
-  last_rid_ = *rid;
   return true;
 }
 
